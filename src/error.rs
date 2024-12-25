@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Clone, Error)]
-pub enum BencodingError {
+pub enum BdecodeError {
     #[error("Expected digit in bencoded string at position '{0}' .")]
     ExpectedDigit(usize),
 
