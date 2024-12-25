@@ -1,0 +1,9 @@
+[package]
+name = "ez-bencoding"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = "2"
+anyhow = "1"
+bitfields = "0.12"
