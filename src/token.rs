@@ -1,7 +1,5 @@
 use bitfields::bitfield;
 
-use crate::NodeType;
-
 /// Bdecode 分词
 /// 用来结构化描述 buffer 中 bencoding 编码的字符串
 #[bitfield(u64)]
@@ -12,7 +10,7 @@ pub struct BdecodeToken {
 
     /// 当前节点类型
     #[bits(3)]
-    node_type: NodeType,
+    node_type: BdecodeTokenType,
 
     /// 下一个节点在 tokens vector 中相对于当前节点的偏移索引值
     #[bits(29)]
@@ -26,27 +24,50 @@ pub struct BdecodeToken {
     header_size: u8,
 }
 
-#[cfg(test)]
-mod tests {
-    use bitfields::bitfield;
+/// token 类型
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum BdecodeTokenType {
+    /// 不存在的节点类型(未初始化或默认构造的节点)
+    None = 0,
+    /// 字典
+    Dict,
+    /// 列表
+    List,
+    /// 字符串
+    Str,
+    /// 整型
+    Int,
+    /// 结束(一个虚拟节点)
+    End,
+}
 
-    use crate::NodeType;
-
-    #[bitfield(u8)]
-    struct DisplayControl {
-        #[bits(2)]
-        bg_mode: u8,
-        #[bits(6)]
-        node_type: NodeType,
+impl BdecodeTokenType {
+    ///Creates a new bitfield instance from the given bits.
+    pub const fn from_bits(bits: u8) -> Self {
+        match bits {
+            1 => Self::Dict,
+            2 => Self::List,
+            3 => Self::Str,
+            4 => Self::Int,
+            5 => Self::End,
+            _ => Self::None,
+        }
     }
 
-    #[test]
-    fn test_displaycontrol() {
-        let mut dc = DisplayControl::new();
-        dc.set_bg_mode(2);
-        dc.set_node_type(NodeType::Dict);
+    pub const fn into_bits(self) -> u8 {
+        self as u8
+    }
+}
 
-        assert_eq!(2, dc.bg_mode());
-        assert_eq!(NodeType::Dict, dc.node_type());
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_token_type() {
+        assert_eq!(BdecodeTokenType::from_bits(1), BdecodeTokenType::Dict);
+        assert_eq!(1, BdecodeTokenType::from_bits(1) as u8);
     }
 }
