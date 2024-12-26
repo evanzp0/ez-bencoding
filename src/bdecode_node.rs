@@ -101,7 +101,6 @@ impl BdecodeNode {
 
             match t {
                 b'd' => {
-                    println!("d");
                     let frame = StackFrameBuilder::new()
                         .with_token(tokens.len() as u32)
                         .build();
@@ -111,7 +110,6 @@ impl BdecodeNode {
                     start += 1;
                 }
                 b'l' => {
-                    println!("l");
                     let frame = StackFrameBuilder::new()
                         .with_token(tokens.len() as u32)
                         .build();
@@ -121,7 +119,6 @@ impl BdecodeNode {
                     start += 1;
                 }
                 b'i' => {
-                    println!("i");
                     let int_start = start;
                     start = check_integer(buffer.as_ref(), start + 1 as usize)?;
                     tokens.push(BdecodeToken::new_int(int_start as u32));
@@ -132,7 +129,6 @@ impl BdecodeNode {
                     start += 1;
                 }
                 b'e' => {
-                    println!("e");
                     if stack.is_empty() {
                         return Err(BdecodeError::UnexpectedEof(start));
                     }
@@ -169,7 +165,6 @@ impl BdecodeNode {
                 }
                 // parse 字符串 
                 _ => {
-                    println!("default");
                     if !t.is_ascii_digit() {
                         println!("parse 字符串 !!!!!");
                         return Err(BdecodeError::ExpectedDigit(start));
@@ -329,23 +324,40 @@ mod tests {
 
     #[test]
     fn test_new_bdecode_node() {
+        // "k1"
+        let buffer: Arc<Vec<u8>> = Arc::new("2:k1".into());
+        let node = BdecodeNode::with_buffer(buffer).unwrap();
+        // k1 root_end 总共 2 个 token.
+        assert_eq!(2, node.tokens.len());
+
+        // 19
+        let buffer: Arc<Vec<u8>> = Arc::new("i19e".into());
+        let node = BdecodeNode::with_buffer(buffer).unwrap();
+        // 19 root_end 总共 2 个 token.
+        assert_eq!(2, node.tokens.len());
+
+        // [19, "ab"]
+        let buffer: Arc<Vec<u8>> = Arc::new("l i19e 2:ab e".replace(" ", "").into());
+        let node = BdecodeNode::with_buffer(buffer).unwrap();
+        // root, 19, "ab", list_end, root_end 总共 5 个 token.
+        assert_eq!(5, node.tokens.len());
+
         // {"a": "b", "cd": "foo", "baro": 9}
         let buffer = Arc::new("d 1:a 1:b 2:cd 3:foo 4:baro i9e e".replace(" ", "").into());
         let node = BdecodeNode::with_buffer(buffer).unwrap();
-        // root_dict, a, b, cd, foo, baro, 9, inner_end, outer_end 总共 9 个 token.
+        // root, a, b, cd, foo, baro, 9, inner_end, root_end 总共 9 个 token.
         assert_eq!(node.tokens.len(), 9);
 
         // {"k1": "v1", "k2": {"k3": "v3", "k4": 9}, k5: [7, 8], k6: "v6"}
         let buffer = Arc::new("d 2:k1 2:v1 2:k2 d 2:k3 2:v3 2:k4 i9e e 2:k5 l i7e i8e e 2:k6 2:v6 e".replace(" ", "").into());
         let node = BdecodeNode::with_buffer(buffer).unwrap();
-        // root_dict, a, b, cd, foo, baro, 9, inner_end, outer_end 总共 9 个 token.
+        // root, a, b, cd, foo, baro, 9, inner_end, root_end 总共 9 个 token.
         assert_eq!(node.tokens.len(), 19);
 
         // {"k1": "v1", "k2": {"k3": 9}}
         let buffer: Arc<Vec<u8>> = Arc::new("d 10:k111111111 2:v1 2:k2 d 2:k3 i9e e e".replace(" ", "").into());
         let node = BdecodeNode::with_buffer(buffer).unwrap();
-        // root_dict, k1, v1, k2, dict_2, k3, i9e, inner_end, outer_end 总共 9 个 token.
+        // root, k1, v1, k2, dict_2, k3, i9e, inner_end, root_end 总共 9 个 token.
         assert_eq!(10, node.tokens.len());
-        println!("{:#?}", node);
     }
 }
