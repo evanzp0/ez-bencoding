@@ -94,7 +94,6 @@ impl BdecodeNode {
                     // 检查当前字符是否不为 'e' ，如果是 'e' ，说明 dict 到了结尾
                     && t != b'e'
                 {
-                    println!("要解析 dict !!!!!");
                     Err(BdecodeError::ExpectedDigit(start))?
                 }
             }
