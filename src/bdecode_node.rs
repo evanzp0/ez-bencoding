@@ -1,10 +1,12 @@
+mod utils;
+
 use std::sync::Arc;
 
 use bitfields::bitfield;
 
 use crate::{
     limits::{self, BUFFER_MAX_OFFSET, DEFAULT_DEPTH_LIMIT, DEFAULT_TOKEN_LIMIT},
-    utils::check_integer,
+    utils::{check_integer, parse_uint},
     BdecodeError, BdecodeResult, BdecodeToken, BdecodeTokenType,
 };
 
@@ -16,22 +18,28 @@ struct StackFrame {
     #[bits(1)]
     state: u8,
 }
+
+// #[derive(Debug)]
 pub struct BdecodeNode {
+    /// 当前节点在 tokens 中的索引
+    /// 0 - root 节点值; -1 - 未初始化  
+    pub token_idx: u32,
+
+    /// 存放 list 和 map 中 item 的 begin_index 和 len
+    pub item_begin_len: Option<(u32, u32)>,
+
     /// 解析后的 token 集合
     pub tokens: Arc<Vec<BdecodeToken>>,
 
     /// 存放解析前字符串的 buffer
     pub buffer: Arc<Vec<u8>>,
-
-    /// 当前节点在 tokens 中的索引
-    /// 0 - root 节点值; -1 - 未初始化  
-    pub token_idx: usize,
-
-    /// 存放 list 和 map 中 item 的 item_index 和 token_index 的集合，用于快速获取 item 值
-    pub item_token_indexes: Arc<Vec<usize>>,
 }
 
 impl BdecodeNode {
+    pub fn with_buffer(buffer: Arc<Vec<u8>>) -> BdecodeResult<Self> {
+        Self::new(buffer, None, None)
+    }
+
     pub fn new(
         buffer: Arc<Vec<u8>>,
         depth_limit: Option<usize>,
@@ -52,6 +60,7 @@ impl BdecodeNode {
         // stack 在解析 dict 和 list 时才会使用。
         // 它的每一项都是存放的 dict 和 list 本身的入口 token 对应的 frame （注意不是 dict 和 list 的第一个元素的 token ）。
         let mut stack = Vec::<StackFrame>::with_capacity(depth_limit as usize);
+        let mut sp = 0;
 
         if end == 0 {
             Err(BdecodeError::UnexpectedEof(0))?
@@ -71,7 +80,12 @@ impl BdecodeNode {
             let t = buffer[start];
 
             // 检查当前是否在解析 dict 或 list 的过程中
-            if let Some(stack_frame) = stack.last() {
+            let current_frame = sp;
+            println!("current_frame: {}, start: {}", current_frame, start);
+
+            if current_frame > 0 {
+                let stack_frame = &stack[current_frame - 1];
+
                 // 检查当前是否正要解析 dict
                 if tokens[stack_frame.token() as usize].node_type() == BdecodeTokenType::Dict 
                     // 检查当前是否正要解析 dict 的 key
@@ -80,14 +94,15 @@ impl BdecodeNode {
                     && !t.is_ascii_digit()
                     // 检查当前字符是否不为 'e' ，如果是 'e' ，说明 dict 到了结尾
                     && t != b'e'
-                
                 {
+                    println!("要解析 dict !!!!!");
                     Err(BdecodeError::ExpectedDigit(start))?
                 }
             }
 
             match t {
                 b'd' => {
+                    println!("d");
                     let frame = StackFrameBuilder::new()
                         .with_token(tokens.len() as u32)
                         .build();
@@ -95,8 +110,10 @@ impl BdecodeNode {
                     tokens.push(BdecodeToken::new_dict(start as u32));
 
                     start += 1;
+                    sp += 1;
                 }
                 b'l' => {
+                    println!("l");
                     let frame = StackFrameBuilder::new()
                         .with_token(tokens.len() as u32)
                         .build();
@@ -104,8 +121,10 @@ impl BdecodeNode {
                     tokens.push(BdecodeToken::new_list(start as u32));
 
                     start += 1;
+                    sp += 1;
                 }
                 b'i' => {
+                    println!("i");
                     let int_start = start;
                     start = check_integer(buffer.as_ref(), start + 1 as usize)?;
                     tokens.push(BdecodeToken::new_int(int_start as u32));
@@ -116,6 +135,7 @@ impl BdecodeNode {
                     start += 1;
                 }
                 b'e' => {
+                    println!("e");
                     if stack.is_empty() {
                         return Err(BdecodeError::UnexpectedEof(start));
                     }
@@ -149,14 +169,185 @@ impl BdecodeNode {
 
                     stack.pop();
                     start += 1;
+                    sp -= 1;
                 }
+                // parse 字符串 
                 _ => {
-                    // parse 字符串 
-                    todo!()
+                    println!("default");
+                    if !t.is_ascii_digit() {
+                        println!("parse 字符串 !!!!!");
+                        return Err(BdecodeError::ExpectedDigit(start));
+                    }
+
+                    let mut len = (t - b'0') as i64;
+                    let str_start = start;
+                    start += 1;
+
+                    if start >= end {
+                        return Err(BdecodeError::UnexpectedEof(start));
+                    }
+
+                    // 解析出后续字符串的 len 值，并返回 buffer 尚未解析的 start 位置
+				    start = parse_uint(buffer.as_ref(), start, b':', &mut len)?;
+
+                    if start == end {
+                        return Err(BdecodeError::ExpectedColon(str_start, end));
+                    }
+
+                    // 截取 ':' 后的 buffer size
+                    let buff_size = (end - start - 1) as i64;
+                    if len > buff_size {
+                        return Err(BdecodeError::UnexpectedEof(start));
+                    }
+
+                    // skip ':'
+                    start += 1;
+                    if start > end {
+                        return Err(BdecodeError::UnexpectedEof(start));
+                    }
+
+                    // the bdecode_token only has 8 bits to keep the header size
+                    // in. If it overflows, fail!
+                    //
+                    // eg: "10:abcdefghij2:kl"
+                    //      ^^ ^
+                    //      || |
+                    //      || start(3), 也就是 bdecode_token() 构造函数中的 header_size 值
+                    //      |bdecode_token.header 值
+                    //      str_start(0)
+                    //
+                    // start - 1 = 2， 就是 "10" 的长度为 2
+                    let header_size = start - str_start - 1;
+                    if header_size > limits::MAX_HEADER_SIZE {
+                        return Err(BdecodeError::LimitExceeded(limits::MAX_HEADER_SIZE));
+                    }
+
+                    tokens.push(BdecodeToken::new_str(str_start as u32, header_size as u8));
+                    // 接上面的例子, 跳过整个字符串 "abcdefghij", 指向 "2:kl" 的 '2' 位置
+				    start += len as usize;
                 }
             }
+
+            if current_frame > 0 {
+                let stack_frame = &mut stack[current_frame - 1];
+                if tokens[stack_frame.token() as usize].node_type() == BdecodeTokenType::Dict {
+                    // 下一个我们解析的 Dict item 的 state 是一个相反的值，也就是从 key 切换到 value.
+                    stack_frame.set_state(!stack_frame.state());
+                }
+            }
+
+            // 如果当前栈为空，说明当前顶层节点也处理完了，则跳出循环. 也就是已经解析完整个 buffer 了。
+            if stack.is_empty() {
+                break;
+            }
+        } // end while
+
+        // 推入一个虚拟 end token，用于结束解析
+        tokens.push(BdecodeToken::new_end(start as u32));
+
+        let item_begin_len = if tokens.len() >= 4 
+            && matches!(tokens[0].node_type(), BdecodeTokenType::Dict | BdecodeTokenType::List) 
+        {
+            Some((1, (tokens.len() - 3) as u32))
+        } else {
+            None
+        };
+
+        Ok(
+            BdecodeNode {
+                tokens: Arc::new(tokens),
+                item_begin_len,
+                buffer,
+                token_idx: 0,
+            }
+        )
+    }
+
+    pub fn token_type(&self) -> BdecodeTokenType {
+        if let Some(token) = self.tokens.get(self.token_idx as usize) { 
+            return token.node_type();
+        } else {
+            return BdecodeTokenType::None;
+        }
+    }
+
+    pub fn int_value(&self) -> BdecodeResult<i64> {
+        assert!(self.token_type() == BdecodeTokenType::Int);
+
+        let token_idx = self.token_idx as usize;
+        let t = &self.tokens[token_idx];
+        let size = self.tokens[token_idx + 1].offset() - t.offset();
+
+        // +1 is to skip the 'i'
+        let start = t.offset() + 1;
+        let mut val = 0;
+        let mut negative = false;
+
+        if  self.buffer[start as usize] == b'-' {
+            negative = true;
         }
 
-        todo!()
+        let end = parse_uint(self.buffer.as_ref(), start as usize, b'e', &mut val)?;
+
+        assert!(end < (start + size) as usize);
+
+        if negative {
+            Ok(-val)
+        } else {
+            Ok(val)
+        }
+    }
+}
+
+impl core::fmt::Debug for BdecodeNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BdecodeNode")
+            .field("token_idx", &self.token_idx)
+            .field("item_begin_len", &self.item_begin_len)
+            .field("tokens", &self.tokens)
+            .field("buffer", &bytes::Bytes::copy_from_slice(&self.buffer))
+            .finish()
+    }
+}
+
+impl core::fmt::Display for BdecodeNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // let mut tokens = self.tokens.clone();
+        f.debug_struct("BdecodeNode")
+            .field("token_idx", &self.token_idx)
+            .field("item_begin_len", &self.item_begin_len)
+            .field("tokens", &self.tokens)
+            .field("buffer", &bytes::Bytes::copy_from_slice(&self.buffer))
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_bdecode_node() {
+        // // {"a": "b", "cd": "foo", "baro": 9}
+        // let buffer = Arc::new("d 1:a 1:b 2:cd 3:foo 4:baro i9e e".replace(" ", "").into());
+        // let node = BdecodeNode::with_buffer(buffer).unwrap();
+        // // root_dict, a, b, cd, foo, baro, 9, inner_end, outer_end 总共 9 个 token.
+        // assert_eq!(node.tokens.len(), 9);
+
+        // // {"k1": "v1", "k2": {"k3": "v3", "k4": 9}, k5: [7, 8], k6: "v6"}
+        // let buffer = Arc::new("d 2:k1 2:v1 2:k2 d 2:k3 2:v3 2:k4 i9e e 2:k5 l i7e i8e e 2:k6 2:v6 e".replace(" ", "").into());
+        // let node = BdecodeNode::with_buffer(buffer).unwrap();
+        // // root_dict, a, b, cd, foo, baro, 9, inner_end, outer_end 总共 9 个 token.
+        // // assert_eq!(node.tokens.len(), 9);
+        // println!("{:#?}", node);
+
+        // {"k1": "v1", "k2": {"k3": 9}}
+        // state: 0 0 1 0 1 0 1 0 1
+        let buffer: Arc<Vec<u8>> = Arc::new("d 2:k1 2:v1 2:k2 d 2:k3 i9e e e".replace(" ", "").into());
+        // println!("{}", buffer[18] as char);
+        let node = BdecodeNode::with_buffer(buffer).unwrap();
+        // root_dict, a, b, cd, foo, baro, 9, inner_end, outer_end 总共 9 个 token.
+        // assert_eq!(node.tokens.len(), 9);
+        println!("{:#?}", node);
     }
 }

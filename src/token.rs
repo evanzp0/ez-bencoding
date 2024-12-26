@@ -52,7 +52,7 @@ pub struct BdecodeToken {
     #[bits(29)]
     next_item: u32,
 
-    /// 字符串在 bdecoded buffer 中需要跳过的头部字节数
+    /// 字符串在 bdecoded buffer 中, ':' 前的代表整数的字符串长度值
     /// 
     /// 例如：
     /// "10:abcdefghij" 中的 header 值是 '10', 所以 header_size 为 2
@@ -82,12 +82,17 @@ impl BdecodeToken {
 
     pub fn new_int(offset: u32) -> Self {
         let next_item = 1;
-        Self::new_all(offset, BdecodeTokenType::List, next_item, 0)
+        Self::new_all(offset, BdecodeTokenType::Int, next_item, 0)
     }
 
     pub fn new_end(offset: u32) -> Self {
         let next_item = 1;
         Self::new_all(offset, BdecodeTokenType::End, next_item, 0)
+    }
+
+    pub fn new_str(offset: u32, head_size: u8) -> Self {
+        let next_item = 1;
+        Self::new_all(offset, BdecodeTokenType::Str, next_item, head_size)
     }
 }
 

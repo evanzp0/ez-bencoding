@@ -5,8 +5,8 @@ pub enum BdecodeError {
     #[error("Expected digit in bencoded string at position '{0}' .")]
     ExpectedDigit(usize),
 
-    #[error("Expected colon in bencoded string at position '{0}' .")]
-    ExpectedColon(usize),
+    #[error("Expected colon in bencoded string between '[{0}, {1})' .")]
+    ExpectedColon(usize, usize),
 
     #[error("Unexpected end of file in bencoded string at position '{0}' .")]
     UnexpectedEof(usize),
@@ -17,7 +17,7 @@ pub enum BdecodeError {
     #[error("bencoded recursion depth limit exceeded over '{0}' times.")]
     DepthExceeded(usize),
 
-    #[error("bencoded item count limit exceeded over '{0}' .")]
+    #[error("bencoded limit exceeded over '{0}' .")]
     LimitExceeded(usize),
 
     #[error("integer overflow with string '{0}'")]

@@ -7,7 +7,7 @@ pub mod limits {
     pub const MAX_NEXT_ITEM: usize = (1 << 29) - 1;
 
     ///指 Dict 中组成 key 字符串的最大长度。
-    pub const MAX_HEADER: usize = 7;
+    pub const MAX_HEADER_SIZE: usize = 7;
 
     /// 解析时 dict 和 list 的最大嵌套深度限制。
     pub const DEFAULT_DEPTH_LIMIT: usize = 100;
