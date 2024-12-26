@@ -1,6 +1,6 @@
 mod utils;
 
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use bitfields::bitfield;
 
@@ -10,6 +10,8 @@ use crate::{
     BdecodeError, BdecodeResult, BdecodeToken, BdecodeTokenType,
 };
 
+/// 解析 dict 或 list 过程中的会生成一个 stack, 
+/// 其中每一个 StackFrame 元素都对应 dict 或 list 的入口 token .
 #[bitfield(u32)]
 #[derive(Clone, Copy)]
 struct StackFrame {
@@ -20,7 +22,7 @@ struct StackFrame {
     state: u8,
 }
 
-// #[derive(Debug)]
+/// 用于存放解析后的数据
 pub struct BdecodeNode {
     /// 当前节点在 tokens 中的索引
     /// 0 - root 节点值; -1 - 未初始化  
@@ -257,6 +259,7 @@ impl BdecodeNode {
         )
     }
 
+    /// 获取当前节点的 token 的类型
     pub fn token_type(&self) -> BdecodeTokenType {
         if let Some(token) = self.tokens.get(self.token_idx as usize) { 
             return token.node_type();
@@ -265,6 +268,7 @@ impl BdecodeNode {
         }
     }
 
+    /// 获取当前节点的整数值
     pub fn int_value(&self) -> BdecodeResult<i64> {
         assert!(self.token_type() == BdecodeTokenType::Int);
 
@@ -290,6 +294,20 @@ impl BdecodeNode {
         } else {
             Ok(val)
         }
+    }
+
+    /// 获取当前节点的字符串值
+    pub fn string_value(&self) -> BdecodeResult<Cow<str>> {
+        assert!(self.token_type() == BdecodeTokenType::Str);
+        let token = &self.tokens[self.token_idx as usize];
+        let start = token.offset() as usize;
+        let header_size = token.header_size() as usize + 1;
+        let end = self.tokens[(self.token_idx + 1) as usize].offset() as usize;
+
+        let buf = &self.buffer[start + header_size ..end];
+        let rst = String::from_utf8_lossy(buf);
+
+        Ok(rst)
     }
 }
 
@@ -319,6 +337,27 @@ impl core::fmt::Display for BdecodeNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_string_value() {
+        let buffer: Arc<Vec<u8>> = Arc::new("11:k1000000012".into());
+        let node = BdecodeNode::with_buffer(buffer).unwrap();
+        assert_eq!(node.string_value().unwrap(), "k1000000012");
+    }
+
+    #[test]
+    fn test_int_value() {
+        let buffer: Arc<Vec<u8>> = Arc::new("i19e".into());
+        let node = BdecodeNode::with_buffer(buffer).unwrap();
+        assert_eq!(node.int_value().unwrap(), 19);
+    }
+
+    #[test]
+    fn test_token_type() {
+        let buffer: Arc<Vec<u8>> = Arc::new("2:k1".into());
+        let node = BdecodeNode::with_buffer(buffer).unwrap();
+        assert_eq!(BdecodeTokenType::Str, node.token_type());
+    }
 
     #[test]
     fn test_new_bdecode_node() {
