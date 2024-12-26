@@ -219,10 +219,27 @@ impl BdecodeNode {
                 }
             }
 
+            
             if let Some(stack_frame_prt) = current_frame_ptr {
                 let stack_frame =  unsafe { stack_frame_prt.as_mut_unchecked() };
+                // // 因为 vec 的 pop 只是将 sp - 1，并不会释放内存，所以下面的这段可以用后面的方法二代替。
+                // // 方法一：
+                // if let Some(now_frame_ptr) = stack.last() {
+                //     let now_frame_ptr = now_frame_ptr as *const StackFrame;
+                //     if now_frame_ptr >= stack_frame_prt {
+                //         if tokens[stack_frame.token() as usize].node_type() == BdecodeTokenType::Dict {
+                //             // 下一个我们解析的 Dict item 的 state 是一个相反的值，也就是从 key 切换到 value.
+                //             let _state = stack_frame.state();
+                //             stack_frame.set_state(!stack_frame.state());
+                //         }
+                //     }
+                // } 
+
+                // 方法二：
+                // 注意：如果之前 stack 调用过 pop, 则下面写入时，会写到 stack 已经 pop 掉的位置，但是不会有读取，且不会报错。
                 if tokens[stack_frame.token() as usize].node_type() == BdecodeTokenType::Dict {
                     // 下一个我们解析的 Dict item 的 state 是一个相反的值，也就是从 key 切换到 value.
+                    let _state = stack_frame.state();
                     stack_frame.set_state(!stack_frame.state());
                 }
             }
@@ -391,10 +408,46 @@ mod tests {
         // root, a, b, cd, foo, baro, 9, inner_end, root_end 总共 9 个 token.
         assert_eq!(node.tokens.len(), 19);
 
-        // {"k1": "v1", "k2": {"k3": 9}}
+        // {"k111111111": "v1", "k2": {"k3": 9}}
         let buffer: Arc<Vec<u8>> = Arc::new("d 10:k111111111 2:v1 2:k2 d 2:k3 i9e e e".replace(" ", "").into());
         let node = BdecodeNode::with_buffer(buffer).unwrap();
-        // root, k1, v1, k2, dict_2, k3, i9e, inner_end, root_end 总共 9 个 token.
+        // root, k111111111, v1, k2, dict_2, k3, i9e, inner_end, root_end 总共 9 个 token.
         assert_eq!(10, node.tokens.len());
+
+        // {"k1": [9], "k2": 2}
+        // str | state_处理前 - stack_frame(state_处理后) | pos
+        // --------------------
+        // d_1     X - d_1(0)  0
+        // 2:k1    0 - d_1(1)  1
+        // l_2     1 - d_1(0)  5
+        // i9e     X - l_2     6
+        // e_2     X - l_2     9
+        // 2:k2    0 - d_1(1)  10
+        // i2e     1 - d_1(0)  14
+        // e_1     0 - d_1(1)  17
+        // e       1 - d_1(0)  18
+        let buffer: Arc<Vec<u8>> = Arc::new("d 2:k1 l i9e e 2:k2 i2e e".replace(" ", "").into());
+        let node = BdecodeNode::with_buffer(buffer).unwrap();
+        // root, k1, list_2, 9, list_2_end, k2, 2, inner_end, root_end 总共 9 个 token.
+        assert_eq!(9, node.tokens.len());
+
+        // {"k1": {"k2": 9}, "k3": 3}
+        // str | state_处理前 - stack_frame(state_处理后) | pos
+        // --------------------------
+        // d_1     X - d_1(0)   0
+        // 2:k1    0 - d_1(1)   1
+        // d_2     1 - d_1(0)   5
+        // 2:k2    0 - d_2(1)   6
+        // i9e     1 - d_2(0)   10
+        // e_2     0 - d_2(1)*  13
+        // 2:k3    0 - d_1(1)   14
+        // i3e     1 - d_1(0)   18
+        // e_1     0 - d_1(1)   21
+        // e       1 - d_1(0)   22
+        let buffer: Arc<Vec<u8>> = Arc::new("d 2:k1 d 2:k2 i9e e 2:k3 i3e e".replace(" ", "").into());
+        let node = BdecodeNode::with_buffer(buffer).unwrap();
+        // root, k1, dict_2, k2, 9, dict_2_end, k3, 3, inner_end, root_end 总共 10 个
+        assert_eq!(10, node.tokens.len());
+        println!("{:#?}", node.tokens);
     }
 }
