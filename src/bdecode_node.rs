@@ -165,7 +165,6 @@ impl BdecodeNode {
                 // parse 字符串 
                 _ => {
                     if !t.is_ascii_digit() {
-                        println!("parse 字符串 !!!!!");
                         return Err(BdecodeError::ExpectedDigit(start));
                     }
 
