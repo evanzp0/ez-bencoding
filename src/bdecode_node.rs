@@ -425,7 +425,7 @@ mod tests {
         // 2:k2    0 - d_1(1)  10
         // i2e     1 - d_1(0)  14
         // e_1     0 - d_1(1)  17
-        // e       1 - d_1(0)  18
+        // e_x     1 - d_1(0)  18
         let buffer: Arc<Vec<u8>> = Arc::new("d 2:k1 l i9e e 2:k2 i2e e".replace(" ", "").into());
         let node = BdecodeNode::with_buffer(buffer).unwrap();
         // root, k1, list_2, 9, list_2_end, k2, 2, inner_end, root_end 总共 9 个 token.
@@ -443,11 +443,34 @@ mod tests {
         // 2:k3    0 - d_1(1)   14
         // i3e     1 - d_1(0)   18
         // e_1     0 - d_1(1)   21
-        // e       1 - d_1(0)   22
+        // e_x     1 - d_1(0)   22
         let buffer: Arc<Vec<u8>> = Arc::new("d 2:k1 d 2:k2 i9e e 2:k3 i3e e".replace(" ", "").into());
         let node = BdecodeNode::with_buffer(buffer).unwrap();
         // root, k1, dict_2, k2, 9, dict_2_end, k3, 3, inner_end, root_end 总共 10 个
         assert_eq!(10, node.tokens.len());
-        println!("{:#?}", node.tokens);
+
+        // {"k1": {"k2": {"k3": [9]}}, "k4": "4"}
+        // str | state_处理前 - stack_frame(state_处理后) | pos
+        // --------------------------------------
+        // d_1     X - d_1(0)   0
+        // 2:k1    0 - d_1(1)   1
+        // d_2     1 - d_1(0)   5
+        // 2:k2    0 - d_2(1)   6
+        // d_3     1 - d_2(0)   10
+        // 2:k3    0 - d_3(1)   11
+        // l_4     1 - d_3(0)   15
+        // i9e     X - l_4      16
+        // e_4     X - l_4      19
+        // e_3     1 - d_3(0)   20
+        // e_2     0 - d_2(1)*  21
+        // 2:k4    0 - d_1(1)   22
+        // 1:4     1 - d_1(0)   26
+        // e_1     1 - d_1(0)   29
+        // e_x     1 - d_1(0)   30
+
+        let buffer: Arc<Vec<u8>> = Arc::new("d 2:k1 d 2:k2 d 2:k3 l i9e e e e 2:k4 1:4 e".replace(" ", "").into());
+        let node = BdecodeNode::with_buffer(buffer).unwrap();
+        // root, k1, dict_2, k2, dict_3, k3, list_4, 9, list_4_end, dict_3_end, k4, 4, dict_2_end, inner_end, root_end 总共 15 个 token.
+        assert_eq!(15, node.tokens.len());
     }
 }
