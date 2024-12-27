@@ -1,5 +1,6 @@
 #![feature(string_from_utf8_lossy_owned)]
 #![feature(ptr_as_ref_unchecked)]
+#![feature(str_from_raw_parts)]
 
 mod error;
 mod commons;

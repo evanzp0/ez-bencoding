@@ -1,6 +1,6 @@
 mod utils;
 
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
 use bitfields::bitfield;
 
@@ -23,6 +23,7 @@ struct StackFrame {
 }
 
 /// 用于存放解析后的数据
+#[derive(Clone)]
 pub struct BdecodeNode {
     /// 当前节点在 tokens 中的索引
     /// 0 - root 节点值; -1 - 未初始化  
@@ -316,8 +317,23 @@ impl BdecodeNode {
         }
     }
 
+    // /// 获取当前节点的字符串值
+    // pub fn string_value(&self) -> Cow<str> {
+    //     assert!(self.token_type() == BdecodeTokenType::Str);
+
+    //     let token = &self.tokens[self.token_index as usize];
+    //     let start = token.offset() as usize;
+    //     let header_size = token.header_size() as usize + 1;
+    //     let end = self.tokens[(self.token_index + 1) as usize].offset() as usize;
+
+    //     let buf = &self.buffer[start + header_size ..end];
+    //     let rst = String::from_utf8_lossy(buf);
+
+    //     rst
+    // }
+
     /// 获取当前节点的字符串值
-    pub fn string_value(&self) -> Cow<str> {
+    pub fn string_value(&self) -> Cow<[u8]> {
         assert!(self.token_type() == BdecodeTokenType::Str);
 
         let token = &self.tokens[self.token_index as usize];
@@ -326,10 +342,12 @@ impl BdecodeNode {
         let end = self.tokens[(self.token_index + 1) as usize].offset() as usize;
 
         let buf = &self.buffer[start + header_size ..end];
-        let rst = String::from_utf8_lossy(buf);
+        // let rst = String::from_utf8_lossy(buf);
+        let rst = Cow::Borrowed(buf);
 
         rst
     }
+
 
     /// 获取当前 list or dict 节点的长度
     pub fn len(&self) -> usize {
@@ -343,6 +361,7 @@ impl BdecodeNode {
         assert!(self.token_type() == BdecodeTokenType::List);
 
         if index >= self.len() {
+            println!("index: {}, len: {}", index, self.len());
             panic!("index out of range");
         }
         
@@ -357,6 +376,20 @@ impl BdecodeNode {
         };
 
         node
+    }
+
+    pub fn list_string_value_at(&self, index: usize) -> Cow<[u8]> {
+        let node = self.list_at(index);
+        let val = node.string_value();
+
+        let val_ptr = val.as_ref() as *const [u8];
+        let val_ref = unsafe { &*val_ptr };
+
+        Cow::Borrowed(val_ref)
+    }
+
+    pub fn list_int_value_at(&self, index: usize) -> BdecodeResult<i64> {
+        self.list_at(index).int_value()
     }
 
     /// 获取 dict 中指定索引的节点对(key, value)
@@ -421,6 +454,73 @@ impl BdecodeNode {
         }
 
         None
+    }
+
+    pub fn dict_find_string_value(&self, key: &[u8]) -> Option<Cow<[u8]>> {
+        let node = self.dict_find(key);
+        
+        if let Some(node) = node {
+            let val = node.string_value();
+            let val_ptr = val.as_ref() as *const [u8];
+            let val_ref = unsafe { &*val_ptr };
+
+            let rst = Cow::Borrowed(val_ref);
+
+            return Some(rst);
+        }
+        
+        None
+    }
+
+    pub fn dict_find_int_value(&self, key: &[u8]) -> Option<i64> {
+        let node = self.dict_find(key);
+        
+        if let Some(node) = node {
+            return node.int_value().ok()
+        }
+
+        None
+    }
+
+    pub fn dict_find_list(&self, key: &[u8]) -> Option<Vec<BdecodeNode>> {
+        let node = self.dict_find(key);
+        
+        if let Some(node) = node {
+            return if node.token_type() == BdecodeTokenType::List {
+                let mut nodes = vec![];
+                for i in 0..node.len() {
+                    let node = node.list_at(i);
+                    nodes.push(node);
+                }
+
+                Some(nodes)
+            } else {
+                None
+            }
+        }
+
+        None
+    }
+
+    pub fn dict_find_dict(&self, key: &[u8]) -> Option<HashMap<Cow<[u8]>, BdecodeNode>> {
+        let Some(node) = self.dict_find(key) else {
+            return None;
+        };
+
+        let mut node_map = HashMap::new();
+        for i in 0..node.len() {
+            let (key, value) = node.dict_at(i);
+
+            let key_str = key.string_value();
+            let key_ptr = key_str.as_ref() as *const [u8];
+            let key_ref = unsafe { &*key_ptr };
+
+            let key = Cow::Borrowed(key_ref);
+
+            node_map.insert(key, value);
+        }
+
+        Some(node_map)
     }
 }
 
@@ -495,13 +595,16 @@ mod tests {
         let buffer: Arc<Vec<u8>> = Arc::new("l i19e 2:ab d 2:k1 2:v1 2:k2 l i1e i2e e e e".replace(" ", "").into());
         let node = BdecodeNode::with_buffer(buffer).unwrap();
         assert_eq!(19, node.list_at(0).int_value().unwrap());
-        assert_eq!("ab", node.list_at(1).string_value());
+        assert_eq!(19, node.list_int_value_at(0).unwrap());
+        assert_eq!(b"ab", node.list_at(1).string_value().as_ref());
 
         let node_2 = node.list_at(2);
         assert_eq!(BdecodeTokenType::Dict, node_2.token_type());
         assert_eq!(3, node_2.token_index);
         assert_eq!(&vec![4, 6], node_2.item_indexes.as_ref());
         assert_eq!(2, node.list_at(2).len());
+
+        assert_eq!(b"ab", node.list_string_value_at(1).as_ref());
     }
 
     #[test]
@@ -515,11 +618,11 @@ mod tests {
         assert_eq!(2, node_2.len());
 
         let (key, val) = node_2.dict_at(0);
-        assert_eq!("k1", key.string_value());
-        assert_eq!("v1", val.string_value());
+        assert_eq!(b"k1", key.string_value().as_ref());
+        assert_eq!(b"v1", val.string_value().as_ref());
 
         let (key, val) = node_2.dict_at(1);
-        assert_eq!("k2", key.string_value());
+        assert_eq!(b"k2", key.string_value().as_ref());
         assert_eq!(7, val.token_index);
         assert_eq!(2, val.len());
         assert_eq!(&vec![8, 9], val.item_indexes.as_ref());
@@ -527,13 +630,13 @@ mod tests {
 
     #[test]
     fn test_dict_find() {
-        // {"k1": "v1", "k2": [1, 2], "k03": 3}
-        let buffer: Arc<Vec<u8>> = Arc::new("d 2:k1 2:v1 2:k2 l i1e i2e e 3:k03 i3e e".replace(" ", "").into());
+        // {"k1": "v1", "k2": [1, 2], "k03": 3, "k4": {"k5": 5, "k6": 6}}
+        let buffer: Arc<Vec<u8>> = Arc::new("d 2:k1 2:v1 2:k2 l i1e i2e e 3:k03 i3e 2:k4 d 2:k5 i5e 2:k6 i6e e e".replace(" ", "").into());
         let node = BdecodeNode::with_buffer(buffer).unwrap();
-        assert_eq!(3, node.len());
+        assert_eq!(4, node.len());
 
         let val_1 = node.dict_find(b"k1").unwrap();
-        assert_eq!("v1", val_1.string_value());
+        assert_eq!(b"v1", val_1.string_value().as_ref());
 
         let val_3 = node.dict_find(b"k03").unwrap();
         assert_eq!(3, val_3.int_value().unwrap());
@@ -544,6 +647,22 @@ mod tests {
         assert_eq!(2, val_2.len());
         assert_eq!(1, val_2.list_at(0).int_value().unwrap());
         assert_eq!(2, val_2.list_at(1).int_value().unwrap());
+
+        let v1 = node.dict_find_string_value(b"k1");
+        assert_eq!(b"v1", v1.unwrap().as_ref());
+
+        let v03 = node.dict_find_int_value(b"k03");
+        assert_eq!(3, v03.unwrap());
+
+        let v2 = node.dict_find_list(b"k2").unwrap();
+        assert_eq!(5, v2[0].token_index);
+        assert_eq!(6, v2[1].token_index);
+
+        let v4 = node.dict_find_dict(b"k4").unwrap();
+        let v5 = v4.get(b"k5".as_ref()).unwrap();
+        assert_eq!(5, v5.int_value().unwrap());
+        let v6 = v4.get(b"k6".as_ref()).unwrap();
+        assert_eq!(6, v6.int_value().unwrap());
     }
 
     #[test]
@@ -627,7 +746,7 @@ mod tests {
     fn test_string_value() {
         let buffer: Arc<Vec<u8>> = Arc::new("11:k1000000012".into());
         let node = BdecodeNode::with_buffer(buffer).unwrap();
-        assert_eq!(node.string_value(), "k1000000012");
+        assert_eq!(node.string_value().as_ref(), b"k1000000012");
     }
 
     #[test]
