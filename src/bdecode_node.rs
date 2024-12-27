@@ -28,9 +28,9 @@ pub struct BdecodeNode {
     /// 0 - root 节点值; -1 - 未初始化  
     pub token_index: u32,
 
-    /// 存放 list 和 map 中 item 的 begin_index 和 len
-    pub item_begin_len: Option<(u32, u32)>,
+    /// 存放 list 和 map 中 item 的对应的 token 索引集合
     pub item_indexes: Arc<Vec<u32>>,
+    // pub item_begin_len: Option<(u32, u32)>,
 
     /// list 和 map 中 item 的数量
     len: usize,
@@ -266,20 +266,11 @@ impl BdecodeNode {
         // 推入一个虚拟 end token，用于结束解析
         tokens.push(BdecodeToken::new_end(start as u32));
 
-        let item_begin_len = if tokens.len() >= 4 
-            && matches!(tokens[0].node_type(), BdecodeTokenType::Dict | BdecodeTokenType::List) 
-        {
-            Some((1, (tokens.len() - 3) as u32))
-        } else {
-            None
-        };
-
         let (node_indexes, len) = gen_item_indexes(&tokens, 0);
 
         Ok(
             BdecodeNode {
                 tokens: Arc::new(tokens),
-                item_begin_len,
                 item_indexes: node_indexes,
                 len,
                 buffer,
@@ -360,7 +351,6 @@ impl BdecodeNode {
         let node = BdecodeNode {
             buffer: self.buffer.clone(),
             tokens: self.tokens.clone(),
-            item_begin_len: None,
             token_index: token_idx,
             item_indexes: node_indexes,
             len,
@@ -369,7 +359,7 @@ impl BdecodeNode {
         node
     }
 
-    /// 获取 list 中指定索引的节点
+    /// 获取 dict 中指定索引的节点对(key, value)
     pub fn dict_at(&self, index: usize) -> (BdecodeNode, BdecodeNode) {
         assert!(self.token_type() == BdecodeTokenType::Dict);
 
@@ -387,7 +377,6 @@ impl BdecodeNode {
         let key_node = BdecodeNode {
             buffer: self.buffer.clone(),
             tokens: self.tokens.clone(),
-            item_begin_len: None,
             token_index: key_token_idx,
             item_indexes: Default::default(),
             len: 0,
@@ -400,13 +389,38 @@ impl BdecodeNode {
         let val_node = BdecodeNode {
             buffer: self.buffer.clone(),
             tokens: self.tokens.clone(),
-            item_begin_len: None,
             token_index: val_token_idx,
             item_indexes: node_indexes,
             len,
         };
 
         (key_node, val_node)
+    }
+
+    /// 在 dict 中查找 key 对应的 value
+    pub fn dict_find(&self, key: &[u8]) -> Option<BdecodeNode> {
+        assert!(self.token_type() == BdecodeTokenType::Dict);
+
+        for token_index in self.item_indexes.as_ref() {
+            let token = &self.tokens[*token_index as usize];
+            assert!(token.node_type() == BdecodeTokenType::Str);
+            let next_offset = self.tokens[(token_index + 1) as usize].offset() as usize;
+            let start = (token.offset() + token.header_size() as u32 + 1) as usize;
+            
+            if &self.buffer[start..next_offset] == key {
+                let val_token_idx = *token_index + token.next_item();
+                let (node_indexes, len) = gen_item_indexes(&self.tokens, val_token_idx as usize);
+                return Some(BdecodeNode {
+                    buffer: self.buffer.clone(),
+                    tokens: self.tokens.clone(),
+                    token_index: val_token_idx,
+                    item_indexes: node_indexes,
+                    len,
+                });
+            }
+        }
+
+        None
     }
 }
 
@@ -453,7 +467,6 @@ impl core::fmt::Debug for BdecodeNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BdecodeNode")
             .field("token_idx", &self.token_index)
-            .field("item_begin_len", &self.item_begin_len)
             .field("item_indexes", &self.item_indexes)
             .field("tokens", &self.tokens)
             .field("buffer", &bytes::Bytes::copy_from_slice(&self.buffer))
@@ -466,7 +479,6 @@ impl core::fmt::Display for BdecodeNode {
         // let mut tokens = self.tokens.clone();
         f.debug_struct("BdecodeNode")
             .field("token_idx", &self.token_index)
-            .field("item_begin_len", &self.item_begin_len)
             .field("tokens", &self.tokens)
             .field("buffer", &bytes::Bytes::copy_from_slice(&self.buffer))
             .finish()
@@ -511,6 +523,27 @@ mod tests {
         assert_eq!(7, val.token_index);
         assert_eq!(2, val.len());
         assert_eq!(&vec![8, 9], val.item_indexes.as_ref());
+    }
+
+    #[test]
+    fn test_dict_find() {
+        // {"k1": "v1", "k2": [1, 2], "k03": 3}
+        let buffer: Arc<Vec<u8>> = Arc::new("d 2:k1 2:v1 2:k2 l i1e i2e e 3:k03 i3e e".replace(" ", "").into());
+        let node = BdecodeNode::with_buffer(buffer).unwrap();
+        assert_eq!(3, node.len());
+
+        let val_1 = node.dict_find(b"k1").unwrap();
+        assert_eq!("v1", val_1.string_value());
+
+        let val_3 = node.dict_find(b"k03").unwrap();
+        assert_eq!(3, val_3.int_value().unwrap());
+
+        let val_2 = node.dict_find(b"k2").unwrap();
+        assert_eq!(BdecodeTokenType::List, val_2.token_type());
+        assert_eq!(4, val_2.token_index);
+        assert_eq!(2, val_2.len());
+        assert_eq!(1, val_2.list_at(0).int_value().unwrap());
+        assert_eq!(2, val_2.list_at(1).int_value().unwrap());
     }
 
     #[test]
