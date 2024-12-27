@@ -70,13 +70,11 @@ impl BdecodeToken {
             .build()
     }
 
-    pub fn new_dict(offset: u32) -> Self {
-        let next_item = 0; // 等 dict 解析完后再修正
+    pub fn new_dict(offset: u32, next_item: u32) -> Self {
         Self::new_all(offset, BdecodeTokenType::Dict, next_item, 0)
     }
 
-    pub fn new_list(offset: u32) -> Self {
-        let next_item = 0; // 等 dict 解析完后再修正
+    pub fn new_list(offset: u32, next_item: u32) -> Self {
         Self::new_all(offset, BdecodeTokenType::List, next_item, 0)
     }
 

@@ -26,10 +26,14 @@ struct StackFrame {
 pub struct BdecodeNode {
     /// 当前节点在 tokens 中的索引
     /// 0 - root 节点值; -1 - 未初始化  
-    pub token_idx: u32,
+    pub token_index: u32,
 
     /// 存放 list 和 map 中 item 的 begin_index 和 len
     pub item_begin_len: Option<(u32, u32)>,
+    pub item_indexes: Arc<Vec<u32>>,
+
+    /// list 和 map 中 item 的数量
+    len: usize,
 
     /// 解析后的 token 集合
     pub tokens: Arc<Vec<BdecodeToken>>,
@@ -106,7 +110,8 @@ impl BdecodeNode {
                         .with_token(tokens.len() as u32)
                         .build();
                     stack.push(frame);
-                    tokens.push(BdecodeToken::new_dict(start as u32));
+                    // 等 dict 解析完后再修正 next_item
+                    tokens.push(BdecodeToken::new_dict(start as u32, 0));
 
                     start += 1;
                 }
@@ -115,7 +120,8 @@ impl BdecodeNode {
                         .with_token(tokens.len() as u32)
                         .build();
                     stack.push(frame);
-                    tokens.push(BdecodeToken::new_list(start as u32));
+                    // 等 dict 解析完后再修正 next_item
+                    tokens.push(BdecodeToken::new_list(start as u32, 0)); 
 
                     start += 1;
                 }
@@ -266,19 +272,23 @@ impl BdecodeNode {
             None
         };
 
+        let (node_indexes, len) = gen_item_indexes(&tokens, 0);
+
         Ok(
             BdecodeNode {
                 tokens: Arc::new(tokens),
                 item_begin_len,
+                item_indexes: node_indexes,
+                len,
                 buffer,
-                token_idx: 0,
+                token_index: 0,
             }
         )
     }
 
     /// 获取当前节点的 token 的类型
     pub fn token_type(&self) -> BdecodeTokenType {
-        if let Some(token) = self.tokens.get(self.token_idx as usize) { 
+        if let Some(token) = self.tokens.get(self.token_index as usize) { 
             return token.node_type();
         } else {
             return BdecodeTokenType::None;
@@ -289,7 +299,7 @@ impl BdecodeNode {
     pub fn int_value(&self) -> BdecodeResult<i64> {
         assert!(self.token_type() == BdecodeTokenType::Int);
 
-        let token_idx = self.token_idx as usize;
+        let token_idx = self.token_index as usize;
         let t = &self.tokens[token_idx];
         let size = self.tokens[token_idx + 1].offset() - t.offset();
 
@@ -314,25 +324,95 @@ impl BdecodeNode {
     }
 
     /// 获取当前节点的字符串值
-    pub fn string_value(&self) -> BdecodeResult<Cow<str>> {
+    pub fn string_value(&self) -> Cow<str> {
         assert!(self.token_type() == BdecodeTokenType::Str);
-        let token = &self.tokens[self.token_idx as usize];
+
+        let token = &self.tokens[self.token_index as usize];
         let start = token.offset() as usize;
         let header_size = token.header_size() as usize + 1;
-        let end = self.tokens[(self.token_idx + 1) as usize].offset() as usize;
+        let end = self.tokens[(self.token_index + 1) as usize].offset() as usize;
 
         let buf = &self.buffer[start + header_size ..end];
         let rst = String::from_utf8_lossy(buf);
 
-        Ok(rst)
+        rst
     }
+
+    /// 获取 list 中指定索引的节点
+    pub fn list_at(&self, index: usize) -> BdecodeNode {
+        assert!(self.token_type() == BdecodeTokenType::List);
+        if index >= self.len() {
+            panic!("index out of range");
+        }
+        
+        let token_idx = self.item_indexes[index];
+
+        let (node_indexes, len) = gen_item_indexes(&self.tokens, token_idx as usize);
+
+        let node = BdecodeNode {
+            buffer: self.buffer.clone(),
+            tokens: self.tokens.clone(),
+            item_begin_len: None,
+            token_index: token_idx,
+            item_indexes: node_indexes,
+            len,
+        };
+
+        node
+    }    
+
+    /// 获取当前 dict 节点的长度
+    pub fn len(&self) -> usize {
+        assert!(matches!(self.token_type(), BdecodeTokenType::Dict | BdecodeTokenType::List));
+
+        self.len
+    }
+}
+
+fn gen_item_indexes(tokens: &[BdecodeToken], start: usize) -> (Arc<Vec<u32>>, usize) {
+    use BdecodeTokenType::*;
+
+    assert!(start < tokens.len());
+
+    if tokens.len() < 2 {
+        return (Default::default(), 0)
+    }
+    
+    let mut node_indexes = vec![];
+    let mut count = 0;
+    
+    let mut begin = 1 + start;
+    match tokens[start].node_type() {
+        Dict => {
+            while tokens[begin].node_type() != End {
+                if count % 2 == 0 {
+                    node_indexes.push(begin as u32);
+                }
+                count += 1;
+
+                begin += tokens[begin].next_item() as usize;
+            }
+            count /= 2;
+        }
+        List => {
+            while tokens[begin].node_type() != End {
+                node_indexes.push(begin as u32);
+                begin += tokens[begin].next_item() as usize;
+                count += 1;
+            }
+        }
+        _ => (),
+    }
+
+    (Arc::new(node_indexes), count)
 }
 
 impl core::fmt::Debug for BdecodeNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BdecodeNode")
-            .field("token_idx", &self.token_idx)
+            .field("token_idx", &self.token_index)
             .field("item_begin_len", &self.item_begin_len)
+            .field("item_indexes", &self.item_indexes)
             .field("tokens", &self.tokens)
             .field("buffer", &bytes::Bytes::copy_from_slice(&self.buffer))
             .finish()
@@ -343,7 +423,7 @@ impl core::fmt::Display for BdecodeNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // let mut tokens = self.tokens.clone();
         f.debug_struct("BdecodeNode")
-            .field("token_idx", &self.token_idx)
+            .field("token_idx", &self.token_index)
             .field("item_begin_len", &self.item_begin_len)
             .field("tokens", &self.tokens)
             .field("buffer", &bytes::Bytes::copy_from_slice(&self.buffer))
@@ -356,10 +436,102 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_list_at() {
+        // [19, "ab", {"k1": "v1"} ]
+        let buffer: Arc<Vec<u8>> = Arc::new("l i19e 2:ab d 2:k1 2:v1 e e".replace(" ", "").into());
+        let node = BdecodeNode::with_buffer(buffer).unwrap();
+        assert_eq!(19, node.list_at(0).int_value().unwrap());
+        assert_eq!("ab", node.list_at(1).string_value());
+
+        let node_2 = node.list_at(2);
+        assert_eq!(BdecodeTokenType::Dict, node_2.token_type());
+        assert_eq!(3, node_2.token_index);
+        assert_eq!(&vec![4], node_2.item_indexes.as_ref());
+        assert_eq!(1, node.list_at(2).len());
+    }
+
+    // #[test]
+    // #[should_panic(expected = "index out of range")]
+    // fn test_list_at_panic() {
+    //     // [19, "ab", "cd", "ef"]
+    //     let buffer: Arc<Vec<u8>> = Arc::new("l i19e 2:ab 2:cd 2:ef e".replace(" ", "").into());
+    //     let node = BdecodeNode::with_buffer(buffer).unwrap();
+    //     let _ = node.list_at(4);
+    // }
+
+    #[test]
+    fn test_gen_item_indexes() {
+        // 2:v1
+        let v_1 = BdecodeToken::new_str(0, 1);
+        let e_x = BdecodeToken::new_end(1);
+        let tokens = vec![v_1, e_x];
+        let rst = gen_item_indexes(&tokens, 0);
+        assert_eq!(rst, (Arc::new(vec![]), 0));
+
+        // {"k1": "v1", "k2": [1, 2], "k3": 3}
+        // str  | pos   | seq
+        // --------------------
+        // d_1  | 0     | 0
+        // 2:k1 | 1     | 1
+        // 2:v1 | 5     | 2
+        // 2:k2 | 9     | 3
+        // l_2  | 13    | 4
+        // i1e  | 14    | 5
+        // i2e  | 17    | 6
+        // e_2  | 20    | 7
+        // 2:k3 | 21    | 8
+        // i3e  | 25    | 9
+        // e_1  | 28    | 10
+        // e_x  | 29    | 11
+        let d_1 = BdecodeToken::new_dict(0, 11);
+        let k_1 = BdecodeToken::new_str(1, 1);
+        let v_1 = BdecodeToken::new_str(5, 1);
+        let k_2 = BdecodeToken::new_str(9, 1);
+        let l_2 = BdecodeToken::new_list(13, 4);
+        let i_1 = BdecodeToken::new_int(14);
+        let i_2 = BdecodeToken::new_int(17);
+        let e_2 = BdecodeToken::new_end(20);
+        let k_3 = BdecodeToken::new_str(21, 1);
+        let i_3 = BdecodeToken::new_int(25);
+        let e_1 = BdecodeToken::new_end(28);
+        let e_x = BdecodeToken::new_end(29);
+        let tokens = vec![ d_1, k_1, v_1, k_2, l_2, i_1, i_2, e_2, k_3, i_3, e_1, e_x ];
+        let rst = gen_item_indexes(&tokens, 0);
+        assert_eq!(rst, (Arc::new(vec![1, 3, 8]), 3));
+
+        // [1, [2], {"k4": 4}]
+        // str  | pos   | seq
+        // --------------------
+        // l_1  | 0     | 0
+        // i1e  | 1     | 1
+        // l_2  | 4     | 2
+        // i2e  | 5     | 3
+        // e_2  | 8     | 4
+        // d_3  | 9     | 5
+        // 2:k4 | 10    | 6
+        // i4e  | 14    | 7
+        // e_3  | 17    | 8
+        // e_x  | 18    | 9
+        let l_1 = BdecodeToken::new_list(0, 9);
+        let i_1 = BdecodeToken::new_int(1);
+        let l_2 = BdecodeToken::new_list(4, 3);
+        let i_2 = BdecodeToken::new_int(5);
+        let e_2 = BdecodeToken::new_end(8);
+        let d_3 = BdecodeToken::new_dict(9, 4);
+        let k_4 = BdecodeToken::new_str(10, 1);
+        let i_4 = BdecodeToken::new_int(14);
+        let e_3 = BdecodeToken::new_end(17);
+        let e_x = BdecodeToken::new_end(18);
+        let tokens = vec![l_1, i_1, l_2, i_2, e_2, d_3, k_4, i_4, e_3, e_x];
+        let rst = gen_item_indexes(&tokens, 0);
+        assert_eq!(rst, (Arc::new(vec![1, 2, 5]), 3));
+    }
+
+    #[test]
     fn test_string_value() {
         let buffer: Arc<Vec<u8>> = Arc::new("11:k1000000012".into());
         let node = BdecodeNode::with_buffer(buffer).unwrap();
-        assert_eq!(node.string_value().unwrap(), "k1000000012");
+        assert_eq!(node.string_value(), "k1000000012");
     }
 
     #[test]
@@ -387,7 +559,6 @@ mod tests {
         // 19
         let buffer: Arc<Vec<u8>> = Arc::new("i19e".into());
         let node = BdecodeNode::with_buffer(buffer).unwrap();
-        // 19 root_end 总共 2 个 token.
         assert_eq!(2, node.tokens.len());
 
         // [19, "ab"]
@@ -395,24 +566,26 @@ mod tests {
         let node = BdecodeNode::with_buffer(buffer).unwrap();
         // root, 19, "ab", list_end, root_end 总共 5 个 token.
         assert_eq!(5, node.tokens.len());
+        assert_eq!(2, node.len());
 
         // {"a": "b", "cd": "foo", "baro": 9}
         let buffer = Arc::new("d 1:a 1:b 2:cd 3:foo 4:baro i9e e".replace(" ", "").into());
         let node = BdecodeNode::with_buffer(buffer).unwrap();
-        // root, a, b, cd, foo, baro, 9, inner_end, root_end 总共 9 个 token.
         assert_eq!(node.tokens.len(), 9);
+        assert_eq!(3, node.len());
 
         // {"k1": "v1", "k2": {"k3": "v3", "k4": 9}, k5: [7, 8], k6: "v6"}
         let buffer = Arc::new("d 2:k1 2:v1 2:k2 d 2:k3 2:v3 2:k4 i9e e 2:k5 l i7e i8e e 2:k6 2:v6 e".replace(" ", "").into());
         let node = BdecodeNode::with_buffer(buffer).unwrap();
-        // root, a, b, cd, foo, baro, 9, inner_end, root_end 总共 9 个 token.
         assert_eq!(node.tokens.len(), 19);
+        assert_eq!(4, node.len());
 
         // {"k111111111": "v1", "k2": {"k3": 9}}
         let buffer: Arc<Vec<u8>> = Arc::new("d 10:k111111111 2:v1 2:k2 d 2:k3 i9e e e".replace(" ", "").into());
         let node = BdecodeNode::with_buffer(buffer).unwrap();
         // root, k111111111, v1, k2, dict_2, k3, i9e, inner_end, root_end 总共 9 个 token.
         assert_eq!(10, node.tokens.len());
+        assert_eq!(2, node.len());
 
         // {"k1": [9], "k2": 2}
         // str | state_处理前 - stack_frame(state_处理后) | pos
@@ -429,6 +602,7 @@ mod tests {
         let buffer: Arc<Vec<u8>> = Arc::new("d 2:k1 l i9e e 2:k2 i2e e".replace(" ", "").into());
         let node = BdecodeNode::with_buffer(buffer).unwrap();
         assert_eq!(9, node.tokens.len());
+        assert_eq!(2, node.len());
 
         // {"k1": {"k2": 9}, "k3": 3}
         // str | state_处理前 - stack_frame(state_处理后) | pos
@@ -446,6 +620,7 @@ mod tests {
         let buffer: Arc<Vec<u8>> = Arc::new("d 2:k1 d 2:k2 i9e e 2:k3 i3e e".replace(" ", "").into());
         let node = BdecodeNode::with_buffer(buffer).unwrap();
         assert_eq!(10, node.tokens.len());
+        assert_eq!(2, node.len());
 
         // {"k1": {"k2": {"k3": [9]}}, "k4": "4"}
         // str | state_处理前 - stack_frame(state_处理后) | pos
@@ -468,5 +643,6 @@ mod tests {
         let buffer: Arc<Vec<u8>> = Arc::new("d 2:k1 d 2:k2 d 2:k3 l i9e e e e 2:k4 1:4 e".replace(" ", "").into());
         let node = BdecodeNode::with_buffer(buffer).unwrap();
         assert_eq!(15, node.tokens.len());
+        assert_eq!(2, node.len());
     }
 }
