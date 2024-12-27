@@ -317,21 +317,6 @@ impl BdecodeNode {
         }
     }
 
-    // /// 获取当前节点的字符串值
-    // pub fn string_value(&self) -> Cow<str> {
-    //     assert!(self.token_type() == BdecodeTokenType::Str);
-
-    //     let token = &self.tokens[self.token_index as usize];
-    //     let start = token.offset() as usize;
-    //     let header_size = token.header_size() as usize + 1;
-    //     let end = self.tokens[(self.token_index + 1) as usize].offset() as usize;
-
-    //     let buf = &self.buffer[start + header_size ..end];
-    //     let rst = String::from_utf8_lossy(buf);
-
-    //     rst
-    // }
-
     /// 获取当前节点的字符串值
     pub fn string_value(&self) -> Cow<[u8]> {
         assert!(self.token_type() == BdecodeTokenType::Str);
@@ -347,7 +332,6 @@ impl BdecodeNode {
 
         rst
     }
-
 
     /// 获取当前 list or dict 节点的长度
     pub fn len(&self) -> usize {
