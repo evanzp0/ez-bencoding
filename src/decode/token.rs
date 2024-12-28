@@ -4,10 +4,8 @@ use bitfields::bitfield;
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum BdecodeTokenType {
-    /// 不存在的节点类型(未初始化或默认构造的节点)
-    None = 0,
     /// 字典
-    Dict,
+    Dict = 0,
     /// 列表
     List,
     /// 字符串
@@ -22,12 +20,12 @@ impl BdecodeTokenType {
     ///Creates a new bitfield instance from the given bits.
     pub const fn from_bits(bits: u8) -> Self {
         match bits {
-            1 => Self::Dict,
-            2 => Self::List,
-            3 => Self::Str,
-            4 => Self::Int,
-            5 => Self::End,
-            _ => Self::None,
+            0 => Self::Dict,
+            1 => Self::List,
+            2 => Self::Str,
+            3 => Self::Int,
+            4 => Self::End,
+            _ => panic!("Invalid BdecodeTokenType bits"),
         }
     }
 
@@ -101,7 +99,7 @@ mod tests {
 
     #[test]
     fn test_token_type() {
-        assert_eq!(BdecodeTokenType::from_bits(1), BdecodeTokenType::Dict);
-        assert_eq!(1, BdecodeTokenType::from_bits(1) as u8);
+        assert_eq!(BdecodeTokenType::from_bits(0), BdecodeTokenType::Dict);
+        assert_eq!(0, BdecodeTokenType::from_bits(0) as u8);
     }
 }

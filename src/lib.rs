@@ -3,14 +3,9 @@
 #![feature(str_from_raw_parts)]
 
 mod error;
-mod commons;
-mod token;
-mod bdecode_node;
-pub mod utils;
+mod decode;
 
 pub use error::*;
-pub use commons::*;
-pub use token::*;
-pub use bdecode_node::*;
+pub use decode::*;
 
 type BdecodeResult<T> = std::result::Result<T, BdecodeError>;
