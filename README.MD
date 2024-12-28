@@ -1,6 +1,6 @@
 # ez-bencoding
 
-该项目是收到 libtorrent 第三版的 bdecoding 启发，使用 token 对 bencoded 字符串进行解析，由于避免了频繁的内存 alloc 和 dealloc 操作，所以速度快，内存占用小。
+该项目是受到 libtorrent 第三版的 bdecoding 启发，使用 token 对 bencoded 字符串进行解析，由于避免了频繁的内存 alloc 和 dealloc 操作，所以速度快，内存占用小。
 另外，本库还支持在多线程环境下使用，对 BdecodeNode 对象进行 clone() 的操作成本是很低的。
 
 样例：
