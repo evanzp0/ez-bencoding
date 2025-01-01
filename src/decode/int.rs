@@ -1,4 +1,5 @@
-use super::{utils::parse_uint, BdecodeResult, IBdecodeNode, token::BdecodeTokenType};
+
+use super::{token::BdecodeTokenType, utils::parse_uint, BdecodeResult, IBdecodeNode, Style};
 
 crate::primitive_bdecode_node!(Int);
 
@@ -31,7 +32,7 @@ impl Int {
         }
     }
 
-    pub fn to_json(&self) -> String {
+    pub fn to_json_with_style(&self, _style: Style) -> String {
         self.value().expect("parse to int failed").to_string()
     }
 

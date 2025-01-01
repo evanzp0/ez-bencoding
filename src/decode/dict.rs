@@ -1,6 +1,8 @@
 use std::{borrow::Cow, collections::HashMap};
 
-use super::{BdecodeNode, token::BdecodeTokenType, IBdecodeNode};
+use crate::decode::{commons::IDENT_LEN, utils::gen_blanks};
+
+use super::{token::BdecodeTokenType, utils::escape_string, BdecodeNode, IBdecodeNode, Style};
 
 crate::collective_bdecode_node!(Dict);
 
@@ -117,19 +119,56 @@ impl Dict {
         Some(node_map)
     }
 
-    pub fn to_json(&self) -> String {
+    pub fn to_json_with_style(&self, style: Style) -> String {
         let mut sb = String::new();
         let len = self.len();
 
         for i in 0..len {
             let (key, val) = self.item(i);
-            sb.push_str(&format!("{}: {}", key.to_json(), val.to_json()));
+            let key = escape_string(&key.as_str());
+
+            if let Style::Pretty(span) = style {
+                let span = span + IDENT_LEN;
+                let blanks = gen_blanks(span);
+                let val = val.to_json_with_style(Style::Pretty(span));
+                sb.push_str(&format!(r#"{blanks}"{key}": {val}"#));
+            } else {
+                let val = val.to_json_with_style(Style::Compact);
+                sb.push_str(&format!(r#""{key}": {val}"#));
+            }
 
             if i < len - 1 { 
-                sb.push_str(", "); 
+                sb.push_str(","); 
+                if Style::Compact == style {
+                    sb.push_str(" "); 
+                } else {
+                    sb.push_str("\n");
+                }
             }
         }
+
+        if let Style::Pretty(span) = style {
+            let blanks = gen_blanks(span);
+            format!("{}\n{}\n{blanks}{}", "{", sb, "}")
+        } else {
+            format!("{} {} {}", "{", sb, "}")
+        }
         
-        format!("{} {} {}", "{", sb, "}")
+
+        // let mut rst = BytesMut::new();
+        // if let Style::Pretty(span) = style {
+        //     rst.extend_from_slice(b"{\n");
+        //     rst.extend(sb);
+        //     rst.extend(b"\n");
+        //     let blanks = gen_blanks(span);
+        //     rst.extend(blanks);
+        //     rst.extend(b"}");
+        // }  else {
+        //     rst.extend_from_slice(b"{");
+        //     rst.extend(sb);
+        //     rst.extend(b"}");
+        // }
+
+        // rst.into()
     }
 }

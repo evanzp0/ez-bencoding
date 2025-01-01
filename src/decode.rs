@@ -21,6 +21,12 @@ pub use {dict::*, end::*, int::*, list::*, node::*, str::*};
 
 use crate::{BdecodeError, BdecodeResult};
 
+#[derive(PartialEq, Eq)]
+pub enum Style {
+    Compact,
+    Pretty(usize),
+}
+
 /// 用于存放解析后的数据
 #[derive(Clone)]
 pub enum BdecodeNode {
@@ -391,14 +397,22 @@ impl BdecodeNode {
         Self::parse(buffer, None, None)
     }
 
-    pub fn to_json(&self) -> String {
+    pub fn to_json_with_style(&self, style: Style) -> String {
         match self {
-            BdecodeNode::Dict(inner_node) => inner_node.to_json(),
-            BdecodeNode::List(inner_node) => inner_node.to_json(),
-            BdecodeNode::Str(inner_node) => inner_node.to_json(),
-            BdecodeNode::Int(inner_node) => inner_node.to_json(),
-            BdecodeNode::End(inner_node) => inner_node.to_json(),
+            BdecodeNode::Dict(inner_node) => inner_node.to_json_with_style(style),
+            BdecodeNode::List(inner_node) => inner_node.to_json_with_style(style),
+            BdecodeNode::Str(inner_node) => inner_node.to_json_with_style(style),
+            BdecodeNode::Int(inner_node) => inner_node.to_json_with_style(style),
+            BdecodeNode::End(inner_node) => inner_node.to_json_with_style(style),
         }
+    }
+
+    pub fn to_json(&self) -> String {
+        self.to_json_with_style(Style::Compact)
+    }
+
+    pub fn to_json_pretty(&self) -> String {
+        self.to_json_with_style(Style::Pretty(0))
     }
 }
 
@@ -454,10 +468,17 @@ mod tests {
 
     #[test]
     fn test_print() {
-        // {"k1": "v1", "k2": {"k3": "v3", "k4": 9}, k5: [7, 8], k6: "v6"}
-        let buffer = "d 2:k1 2:v1 2:k2 d 2:k3 2:v3 2:k4 i9e e 2:k5 l i7e i8e e 2:k6 2:v6 e".replace(" ", "").into();
+        // {"\x04b": "v\x02", "k2": {"k3": "v3", "k4": 9}, "k5": [7, {"b1": "bb"}], "k6": "v6"}
+        let buffer = b"d 2:\x04b 2:v\x02 2:k2 d 2:k3 2:v3 2:k4 i9e e 2:k5 l i7e d 2:b1 2:bb e e 2:k6 2:v6 e"
+            .into_iter()
+            .filter(|v| {
+                **v != b' '
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         let node = BdecodeNode::parse_buffer(buffer).unwrap();
-        println!("{}", node.to_json());
+        println!("{}", &node.to_json_pretty());
+        println!("{}", &node.to_json());
     }
 
     #[test]

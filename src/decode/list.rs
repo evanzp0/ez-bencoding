@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
-use crate::decode::token::BdecodeTokenType;
+use crate::decode::{commons::IDENT_LEN, token::BdecodeTokenType};
 
-use super::{BdecodeNode, BdecodeResult, IBdecodeNode};
+use super::{utils::gen_blanks, BdecodeNode, BdecodeResult, IBdecodeNode, Style};
 
 crate::collective_bdecode_node!(List);
 
@@ -35,19 +35,52 @@ impl List {
         Cow::Borrowed(val_ref)
     }
 
-    pub fn to_json(&self) -> String {
+    pub fn to_json_with_style(&self, style: Style) -> String {
         let mut sb = String::new();
         let len = self.len();
 
         for i in 0..len {
             let val = self.item(i);
-            sb.push_str(&val.to_json());
+            if let Style::Pretty(span) = style {
+                let span = span + IDENT_LEN;
+                let blanks = gen_blanks(span);
+                let val = val.to_json_with_style(Style::Pretty(span));
+                sb.push_str(&format!("{blanks}{val}"));
+            } else {
+                sb.push_str(&val.to_json_with_style(Style::Compact));
+            }
 
             if i < len - 1 { 
-                sb.push_str(", "); 
+                sb.push_str(","); 
+                if Style::Compact == style {
+                    sb.push_str(" "); 
+                } else {
+                    sb.push_str("\n");
+                }
             }
         }
-        
-        format!("[{}]", sb)
+
+        if let Style::Pretty(span) = style {
+            let blanks = gen_blanks(span);
+            format!("[\n{}\n{blanks}]", sb)
+        } else {
+            format!("[{}]", sb)
+        }
+
+        // let mut rst = BytesMut::new();
+        // if let Style::Pretty(span) = style {
+        //     rst.extend_from_slice(b"[\n");
+        //     rst.extend(sb);
+        //     rst.extend(b"\n");
+        //     let blanks = gen_blanks(span);
+        //     rst.extend(blanks);
+        //     rst.extend(b"]");
+        // }  else {
+        //     rst.extend_from_slice(b"[");
+        //     rst.extend(sb);
+        //     rst.extend(b"]");
+        // }
+
+        // rst.into()
     }
 }

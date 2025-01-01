@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 
-use super::{token::BdecodeTokenType, IBdecodeNode};
+use crate::decode::utils::escape_string;
+
+use super::{token::BdecodeTokenType, IBdecodeNode, Style};
 
 crate::primitive_bdecode_node!(Str);
 
@@ -20,8 +22,7 @@ impl Str {
         rst
     }
 
-    pub fn to_json(&self) -> String {
-        let val = String::from_utf8_lossy_owned(self.value().into_owned());
-        format!(r#""{}""#, val)
+    pub fn to_json_with_style(&self, _style: Style) -> String {
+        format!(r#""{}""#,  escape_string(&self.value()))
     }
 }

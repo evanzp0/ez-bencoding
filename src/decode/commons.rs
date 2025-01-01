@@ -15,3 +15,5 @@ pub mod limits {
     /// 解析时 token 最大数量。
 	pub const DEFAULT_TOKEN_LIMIT: i32 = 1000000;
 }
+
+pub const IDENT_LEN: usize = 4;

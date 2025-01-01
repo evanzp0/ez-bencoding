@@ -127,6 +127,32 @@ pub(crate) fn parse_uint(
     Ok(start)
 }
 
+pub(crate) fn gen_blanks(span: usize) -> String {
+    if span == 0 {
+        "".into()
+    } else {
+        " ".repeat(span).into()
+    }
+}
+
+pub fn escape_char(byte: u8) -> String {
+    match byte {
+        _ if byte.is_ascii_graphic() =>  format!("{}", byte as char),
+        _ => format!("\\x{:02x}", byte),
+    }
+    .to_string()
+}
+
+pub fn escape_string(bytes: &[u8]) -> String {
+    let mut result = String::new();
+    for c in bytes.iter() {
+        result.push_str(&escape_char(*c));
+    }
+
+    result
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
