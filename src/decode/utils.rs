@@ -137,6 +137,8 @@ pub(crate) fn gen_blanks(span: usize) -> String {
 
 pub fn escape_char(byte: u8) -> String {
     match byte {
+        b' ' => " ".into(),
+        b'"' => format!("\\x{:02x}", byte),
         _ if byte.is_ascii_graphic() =>  format!("{}", byte as char),
         _ => format!("\\x{:02x}", byte),
     }
